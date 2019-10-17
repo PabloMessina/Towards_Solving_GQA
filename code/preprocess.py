@@ -2,60 +2,73 @@ import os
 import sys
 import json
 import pickle
-
+import argparse
 import nltk
 import tqdm
 from PIL import Image
 
-def process_question(root, split, word_dic=None, answer_dic=None):
-    if word_dic is None:
-        word_dic = {}
+def save_as_pickle(data, dst_path):
+    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+    with open(dst_path, 'wb') as f:
+        pickle.dump(data, f)
+        print('sucessfully saved data to %s' % dst_path)
 
-    if answer_dic is None:
-        answer_dic = {}
+def process_questions(data_dir, output_dir, split, word2index, answer2index):
 
-    with open(os.path.join(root, 'questions', 'CLEVR_{}_questions.json'.format(split))) as f:
+    questions_path = os.path.join(data_dir, 'questions',
+        'CLEVR_{}_questions.json'.format(split))    
+    with open(questions_path) as f:
+        print('loading questions from %s ...' % questions_path)
         data = json.load(f)
 
-    result = []
+    processed_questions = []
     word_index = 1
     answer_index = 0
-
+    print('processing questions ...')
     for question in tqdm.tqdm(data['questions']):
-        words = nltk.word_tokenize(question['question'])
-        question_token = []
 
+        # tokenize question and map each token its index
+        words = nltk.word_tokenize(question['question'])
+        q_token_indexes = []
         for word in words:
             try:
-                question_token.append(word_dic[word])
-
-            except:
-                question_token.append(word_index)
-                word_dic[word] = word_index
+                idx = word2index[word]
+            except KeyError:
+                idx = word2index[word] = word_index
                 word_index += 1
+            q_token_indexes.append(idx)
 
+        # map answer to its index
         answer_word = question['answer']
-
         try:
-            answer = answer_dic[answer_word]
-
+            a_index = answer2index[answer_word]
         except:
-            answer = answer_index
-            answer_dic[answer_word] = answer_index
+            a_index = answer2index[answer_word] = answer_index
             answer_index += 1
 
-        result.append((question['image_filename'], question_token, answer, question['question_family_index']))
+        # append processed question
+        processed_questions.append((
+            question['image_filename'],
+            q_token_indexes, a_index,
+            question['question_family_index']))
 
-    with open('../data/{}.pkl'.format(split), 'wb') as f:
-        pickle.dump(result, f)
+    save_as_pickle(
+        processed_questions,
+        os.path.join(output_dir, '%s.pkl' % split))
 
-    return word_dic, answer_dic
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--data_root_dir', type=str, required=True)
+    parser.add_argument('--output_dir', type=str, required=True)
+    return parser.parse_args()
 
 if __name__ == '__main__':
-    root = sys.argv[1]
-
-    word_dic, answer_dic = process_question(root, 'train')
-    process_question(root, 'val', word_dic, answer_dic)
-
-    with open('../data/dic.pkl', 'wb') as f:
-        pickle.dump({'word_dic': word_dic, 'answer_dic': answer_dic}, f)
+    args = parse_args()
+    word2index = dict()
+    answer2index = dict()
+    process_questions(args.data_root_dir, args.output_dir, 'train', word2index, answer2index)
+    process_questions(args.data_root_dir, args.output_dir, 'val', word2index, answer2index)
+    save_as_pickle(dict(
+        word2index=word2index,
+        answer2index=answer2index,
+    ), os.path.join(args.output_dir, 'dic.pkl'))
